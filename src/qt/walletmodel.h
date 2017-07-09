@@ -51,6 +51,65 @@ QT_BEGIN_NAMESPACE
 class QTimer;
 QT_END_NAMESPACE
 
+//! Wrapper class to serialize QString objects as std::strings.
+struct AsStdString
+{
+    template<typename Q>
+    class Wrapper
+    {
+    private:
+        Q& m_qstring;
+    public:
+        Wrapper(Q& qstring) : m_qstring(qstring) {}
+
+        template<typename Stream>
+        void Serialize(Stream& s) const { s << m_qstring.toStdString(); }
+
+        template<typename Stream>
+        void Unserialize(Stream& s)
+        {
+            std::string str;
+            s >> str;
+            m_qstring = QString::fromStdString(std::move(str));
+        }
+    };
+};
+
+#ifdef ENABLE_BIP70
+//! Wrapper class to serialize protobuf objects
+struct Proto
+{
+    template<typename Q>
+    class Wrapper
+    {
+    private:
+        Q& m_proto;
+    public:
+        Wrapper(Q& proto) : m_proto(proto) {}
+
+        template<typename Stream>
+        void Serialize(Stream& s) const
+        {
+            std::string tmp;
+            if (m_proto.IsInitialized()) {
+                m_proto.SerializeToString(&tmp);
+            }
+            s << tmp;
+        }
+
+        template<typename Stream>
+        void Unserialize(Stream& s)
+        {
+            std::string tmp;
+            s >> tmp;
+            if (!tmp.empty()) {
+                m_proto.parse(QByteArray::fromRawData(tmp.data(), tmp.size()));
+            }
+        }
+    };
+};
+#endif
+
 class SendCoinsRecipient
 {
 public:
@@ -85,39 +144,19 @@ public:
     static const int CURRENT_VERSION = 1;
     int nVersion;
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action) {
-        std::string sAddress = address.toStdString();
-        std::string sLabel = label.toStdString();
-        std::string sMessage = message.toStdString();
+    SERIALIZE_METHODS(SendCoinsRecipient, obj)
+    {
+        READWRITE(obj.nVersion);
+        READWRITE(Wrap<AsStdString>(obj.address));
+        READWRITE(Wrap<AsStdString>(obj.label));
+        READWRITE(obj.amount);
+        READWRITE(Wrap<AsStdString>(obj.message));
 #ifdef ENABLE_BIP70
-        std::string sPaymentRequest;
-        if (!ser_action.ForRead() && paymentRequest.IsInitialized())
-            paymentRequest.SerializeToString(&sPaymentRequest);
+        READWRITE(Wrap<Proto>(obj.paymentRequest));
+#else
+        READWRITE(obj.sPaymentRequest);
 #endif
-        std::string sAuthenticatedMerchant = authenticatedMerchant.toStdString();
-
-        READWRITE(this->nVersion);
-        READWRITE(sAddress);
-        READWRITE(sLabel);
-        READWRITE(amount);
-        READWRITE(sMessage);
-        READWRITE(sPaymentRequest);
-        READWRITE(sAuthenticatedMerchant);
-
-        if (ser_action.ForRead())
-        {
-            address = QString::fromStdString(sAddress);
-            label = QString::fromStdString(sLabel);
-            message = QString::fromStdString(sMessage);
-#ifdef ENABLE_BIP70
-            if (!sPaymentRequest.empty())
-                paymentRequest.parse(QByteArray::fromRawData(sPaymentRequest.data(), sPaymentRequest.size()));
-#endif
-            authenticatedMerchant = QString::fromStdString(sAuthenticatedMerchant);
-        }
+        READWRITE(Wrap<AsStdString>(obj.authenticatedMerchant));
     }
 };
 
