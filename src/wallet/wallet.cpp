@@ -43,8 +43,6 @@ CFeeRate payTxFee(DEFAULT_TRANSACTION_FEE);
 unsigned int nTxConfirmTarget = DEFAULT_TX_CONFIRM_TARGET;
 bool bSpendZeroConfChange = DEFAULT_SPEND_ZEROCONF_CHANGE;
 bool fWalletRbf = DEFAULT_WALLET_RBF;
-OutputStyle address_style = STYLE_P2SH;
-OutputStyle change_style = STYLE_P2SH;
 
 const char * DEFAULT_WALLET_DAT = "wallet.dat";
 const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
@@ -113,26 +111,7 @@ public:
             Process(script);
     }
 
-    void operator()(const WitnessV0ScriptHash& scriptID)
-    {
-        CScriptID id;
-        CRIPEMD160().Write(scriptID.begin(), 32).Finalize(id.begin());
-        CScript script;
-        if (keystore.GetCScript(id, script)) {
-            Process(script);
-        }
-    }
-
-    void operator()(const WitnessV0KeyHash& keyid)
-    {
-        CKeyID id(keyid);
-        if (keystore.HaveKey(id)) {
-            vKeys.push_back(id);
-        }
-    }
-
-    template<typename X>
-    void operator()(const X &none) {}
+    void operator()(const CNoDestination &none) {}
 };
 
 const CWalletTx* CWallet::GetWalletTx(const uint256& hash) const
@@ -540,7 +519,6 @@ void CWallet::SyncMetaData(std::pair<TxSpends::iterator, TxSpends::iterator> ran
         const uint256& hash = it->second;
         CWalletTx* copyTo = &mapWallet[hash];
         if (copyFrom == copyTo) continue;
-        assert(copyFrom && "Oldest wallet transaction in range assumed to have been found.");
         if (!copyFrom->IsEquivalentTo(*copyTo)) continue;
         copyTo->mapValue = copyFrom->mapValue;
         copyTo->vOrderForm = copyFrom->vOrderForm;
@@ -825,7 +803,7 @@ bool CWallet::GetAccountPubkey(CPubKey &pubKey, std::string strAccount, bool bFo
             bForceNew = true;
         else {
             // Check if the current key has been used
-            CScript scriptPubKey = GetScriptForDestination(GetDestinationForKey(account.vchPubKey, address_style));
+            CScript scriptPubKey = GetScriptForDestination(account.vchPubKey.GetID());
             for (std::map<uint256, CWalletTx>::iterator it = mapWallet.begin();
                  it != mapWallet.end() && account.vchPubKey.IsValid();
                  ++it)
@@ -842,7 +820,7 @@ bool CWallet::GetAccountPubkey(CPubKey &pubKey, std::string strAccount, bool bFo
         if (!GetKeyFromPool(account.vchPubKey, false))
             return false;
 
-        SetAddressBook(GetDestinationForKey(account.vchPubKey, address_style), strAccount, "receive");
+        SetAddressBook(account.vchPubKey.GetID(), strAccount, "receive");
         walletdb.WriteAccount(strAccount, account);
     }
 
@@ -2669,7 +2647,7 @@ bool CWallet::CreateTransaction(const std::vector<CRecipient>& vecSend, CWalletT
                     return false;
                 }
 
-                scriptChange = GetScriptForDestination(GetDestinationForKey(vchPubKey, change_style));
+                scriptChange = GetScriptForDestination(vchPubKey.GetID());
             }
             CTxOut change_prototype_txout(0, scriptChange);
             size_t change_prototype_size = GetSerializeSize(change_prototype_txout, SER_DISK, 0);
@@ -3229,7 +3207,6 @@ bool CWallet::TopUpKeyPool(unsigned int kpSize)
             if (!walletdb.WritePool(index, CKeyPool(pubkey, internal))) {
                 throw std::runtime_error(std::string(__func__) + ": writing generated key failed");
             }
-            RecoverKey(pubkey);
 
             if (internal) {
                 setInternalKeyPool.insert(index);
@@ -3623,10 +3600,13 @@ void CWallet::GetKeyBirthTimes(std::map<CTxDestination, int64_t> &mapKeyBirth) c
     // map in which we'll infer heights of other keys
     CBlockIndex *pindexMax = chainActive[std::max(0, chainActive.Height() - 144)]; // the tip can be reorganized; use a 144-block safety margin
     std::map<CKeyID, CBlockIndex*> mapKeyFirstBlock;
-    for (const CKeyID &keyid : GetKeys()) {
+    std::set<CKeyID> setKeys;
+    GetKeys(setKeys);
+    for (const CKeyID &keyid : setKeys) {
         if (mapKeyBirth.count(keyid) == 0)
             mapKeyFirstBlock[keyid] = pindexMax;
     }
+    setKeys.clear();
 
     // if there are no such keys, we're done
     if (mapKeyFirstBlock.empty())
@@ -3849,17 +3829,17 @@ CWallet* CWallet::CreateWalletFromFile(const std::string walletFile)
 
     if (fFirstRun)
     {
-        // ensure this wallet.dat can only be opened by clients supporting HD with chain split and expects no default key
-        if (!gArgs.GetBoolArg("-usehd", true)) {
-            InitError(strprintf(_("Error creating %s: You can't create non-HD wallets with this version."), walletFile));
-            return nullptr;
-        }
-        walletInstance->SetMinVersion(FEATURE_NO_DEFAULT_KEY);
+        // Create new keyUser and set as default key
+        if (gArgs.GetBoolArg("-usehd", DEFAULT_USE_HD_WALLET) && !walletInstance->IsHDEnabled()) {
 
-        // generate a new master key
-        CPubKey masterPubKey = walletInstance->GenerateNewHDMasterKey();
-        if (!walletInstance->SetHDMasterKey(masterPubKey))
-            throw std::runtime_error(std::string(__func__) + ": Storing master key failed");
+            // ensure this wallet.dat can only be opened by clients supporting HD with chain split
+            walletInstance->SetMinVersion(FEATURE_HD_SPLIT);
+
+            // generate a new master key
+            CPubKey masterPubKey = walletInstance->GenerateNewHDMasterKey();
+            if (!walletInstance->SetHDMasterKey(masterPubKey))
+                throw std::runtime_error(std::string(__func__) + ": Storing master key failed");
+        }
 
         // Top up the keypool
         if (!walletInstance->TopUpKeyPool()) {
@@ -3870,7 +3850,7 @@ CWallet* CWallet::CreateWalletFromFile(const std::string walletFile)
         walletInstance->SetBestChain(chainActive.GetLocator());
     }
     else if (gArgs.IsArgSet("-usehd")) {
-        bool useHD = gArgs.GetBoolArg("-usehd", true);
+        bool useHD = gArgs.GetBoolArg("-usehd", DEFAULT_USE_HD_WALLET);
         if (walletInstance->IsHDEnabled() && !useHD) {
             InitError(strprintf(_("Error loading %s: You can't disable HD on an already existing HD wallet"), walletFile));
             return nullptr;
@@ -4042,96 +4022,4 @@ int CMerkleTx::GetBlocksToMaturity() const
 bool CMerkleTx::AcceptToMemoryPool(const CAmount& nAbsurdFee, CValidationState& state)
 {
     return ::AcceptToMemoryPool(mempool, state, tx, true, nullptr, nullptr, false, nAbsurdFee);
-}
-
-bool CWallet::IsSolvable(const CScript& script) const
-{
-    // This check is to make sure that the script we created can actually be solved for and signed by us
-    // if we were to have the private keys. This is just to make sure that the script is valid and that,
-    // if found in a transaction, we would still accept and relay that transaction. In particular,
-    // it will reject witness outputs that require signing with an uncompressed public key.
-    DummySignatureCreator creator(this);
-    SignatureData sigs;
-    return (ProduceSignature(creator, script, sigs) && VerifyScript(sigs.scriptSig, script, &sigs.scriptWitness, MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE, creator.Checker()));
-}
-
-static const std::string STYLE_STRING_NONE = "";
-static const std::string STYLE_STRING_LEGACY = "legacy";
-static const std::string STYLE_STRING_P2SH = "p2sh";
-static const std::string STYLE_STRING_SEGWIT = "segwit";
-
-OutputStyle ParseStyle(const std::string& style)
-{
-    if (style == STYLE_STRING_LEGACY) {
-        return STYLE_LEGACY;
-    } else if (style == STYLE_STRING_P2SH || style == "default") {
-        return STYLE_P2SH;
-    } else if (style == STYLE_STRING_SEGWIT) {
-        return STYLE_SEGWIT;
-    } else {
-        return STYLE_NONE;
-    }
-}
-
-
-const std::string& FormatStyle(OutputStyle style)
-{
-    switch (style) {
-    case STYLE_LEGACY: return STYLE_STRING_LEGACY;
-    case STYLE_P2SH: return STYLE_STRING_P2SH;
-    case STYLE_SEGWIT: return STYLE_STRING_SEGWIT;
-    default: assert(false);
-    }
-}
-
-CTxDestination CWallet::GetDestinationForKey(const CPubKey& key, OutputStyle style)
-{
-    switch (style) {
-    case STYLE_LEGACY: return key.GetID();
-    case STYLE_P2SH:
-    case STYLE_SEGWIT: {
-        CTxDestination witdest = WitnessV0KeyHash(key.GetID());
-        CScript witprog = GetScriptForDestination(witdest);
-        // Check if the resulting program is solvable (i.e. doesn't use an uncompressed key)
-        if (!IsSolvable(witprog)) return key.GetID();
-        // Usually done when generating, through RecoverKey, but for pre-existing keypool keys this is still needed
-        AddCScript(witprog);
-        if (style == STYLE_P2SH) {
-            return CScriptID(witprog);
-        } else {
-            return witdest;
-        }
-    }
-    default: assert(false);
-    }
-}
-
-CTxDestination CWallet::GetDestinationForScript(const CScript& script, OutputStyle style)
-{
-    switch (style) {
-    case STYLE_LEGACY:
-    case STYLE_P2SH:
-        return CScriptID(script);
-    case STYLE_SEGWIT: {
-        CTxDestination witdest = WitnessV0ScriptHash(Hash(script.begin(), script.end()));
-        CScript witprog = GetScriptForDestination(witdest);
-        // Check if the resulting program is solvable (i.e. doesn't use an uncompressed key)
-        if (!IsSolvable(witprog)) return CScriptID(script);
-        AddCScript(witprog);
-        return witdest;
-    }
-    default: assert(false);
-    }
-}
-
-void CWallet::RecoverKey(const CPubKey& key)
-{
-    // When recovering, we cannot assume any particular style of addresses,
-    // unless it is an uncompressed key. If not, insert the witness redeemscript.
-    // TODO: use separate derivation chains for different style addresses.
-    if (key.IsCompressed()) {
-        CTxDestination witdest = WitnessV0KeyHash(key.GetID());
-        CScript witprog = GetScriptForDestination(witdest);
-        AddCScript(witprog);
-    }
 }

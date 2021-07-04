@@ -17,11 +17,8 @@ from .util import (
     assert_equal,
     get_rpc_proxy,
     rpc_url,
-    wait_until,
 )
 from .authproxy import JSONRPCException
-
-BITCOIND_PROC_WAIT_TIMEOUT = 60
 
 class TestNode():
     """A class for representing a bitcoind node under test.
@@ -128,20 +125,14 @@ class TestNode():
         if not self.running:
             return True
         return_code = self.process.poll()
-        if return_code is None:
-            return False
-
-        # process has stopped. Assert that it didn't return an error code.
-        assert_equal(return_code, 0)
-        self.running = False
-        self.process = None
-        self.rpc_connected = False
-        self.rpc = None
-        self.log.debug("Node stopped")
-        return True
-
-    def wait_until_stopped(self, timeout=BITCOIND_PROC_WAIT_TIMEOUT):
-        wait_until(self.is_node_stopped, timeout=timeout)
+        if return_code is not None:
+            # process has stopped. Assert that it didn't return an error code.
+            assert_equal(return_code, 0)
+            self.running = False
+            self.process = None
+            self.log.debug("Node stopped")
+            return True
+        return False
 
     def node_encrypt_wallet(self, passphrase):
         """"Encrypts the wallet.
@@ -149,22 +140,17 @@ class TestNode():
         This causes bitcoind to shutdown, so this method takes
         care of cleaning up resources."""
         self.encryptwallet(passphrase)
-        self.wait_until_stopped()
+        while not self.is_node_stopped():
+            time.sleep(0.1)
+        self.rpc = None
+        self.rpc_connected = False
 
 class TestNodeCLI():
     """Interface to bitcoin-cli for an individual node"""
 
     def __init__(self, binary, datadir):
-        self.args = []
         self.binary = binary
         self.datadir = datadir
-        self.input = None
-
-    def __call__(self, *args, input=None):
-        # TestNodeCLI is callable with bitcoin-cli command-line args
-        self.args = [str(arg) for arg in args]
-        self.input = input
-        return self
 
     def __getattr__(self, command):
         def dispatcher(*args, **kwargs):
@@ -177,14 +163,9 @@ class TestNodeCLI():
         pos_args = [str(arg) for arg in args]
         named_args = [str(key) + "=" + str(value) for (key, value) in kwargs.items()]
         assert not (pos_args and named_args), "Cannot use positional arguments and named arguments in the same bitcoin-cli call"
-        p_args = [self.binary, "-datadir=" + self.datadir] + self.args
+        p_args = [self.binary, "-datadir=" + self.datadir]
         if named_args:
             p_args += ["-named"]
         p_args += [command] + pos_args + named_args
-        process = subprocess.Popen(p_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        cli_stdout, cli_stderr = process.communicate(input=self.input)
-        returncode = process.poll()
-        if returncode:
-            # Ignore cli_stdout, raise with cli_stderr
-            raise subprocess.CalledProcessError(returncode, self.binary, output=cli_stderr)
-        return json.loads(cli_stdout, parse_float=decimal.Decimal)
+        cli_output = subprocess.check_output(p_args, universal_newlines=True)
+        return json.loads(cli_output, parse_float=decimal.Decimal)

@@ -35,7 +35,7 @@ class CBrokenBlock(CBlock):
         self.vtx = copy.deepcopy(base_block.vtx)
         self.hashMerkleRoot = self.calc_merkle_root()
 
-    def serialize(self, with_witness=True):
+    def serialize(self):
         r = b""
         r += super(CBlock, self).serialize()
         r += struct.pack("<BQ", 255, len(self.vtx))
@@ -53,7 +53,6 @@ class FullBlockTest(ComparisonTestFramework):
     # Change the "outcome" variable from each TestInstance object to only do the comparison.
     def set_test_params(self):
         self.num_nodes = 1
-        self.extra_args = [["-vbparams=segwit:0:999999999999", "-whitelist=127.0.0.1"]]
         self.setup_clean_chain = True
         self.block_heights = {}
         self.coinbase_key = CECKey()

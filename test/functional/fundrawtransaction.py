@@ -4,7 +4,7 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the fundrawtransaction RPC."""
 
-from test_framework.test_framework import BitcoinTestFramework
+from test_framework.test_framework import BitcoinTestFramework, BITCOIND_PROC_WAIT_TIMEOUT
 from test_framework.util import *
 
 
@@ -18,8 +18,6 @@ class RawTransactionsTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
         self.setup_clean_chain = True
-        # importpubkey is not sufficient to watch witness addresses
-        self.extra_args = [["-addressstyle=legacy"], ["-addressstyle=legacy"], ["-addressstyle=legacy"], ["-addressstyle=legacy"]]
 
     def setup_network(self, split=False):
         self.setup_nodes()

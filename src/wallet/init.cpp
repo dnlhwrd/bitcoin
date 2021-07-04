@@ -10,13 +10,10 @@
 #include "utilmoneystr.h"
 #include "validation.h"
 #include "wallet/wallet.h"
-#include "wallet/rpcwallet.h"
 
 std::string GetWalletHelpString(bool showDebug)
 {
     std::string strUsage = HelpMessageGroup(_("Wallet options:"));
-    strUsage += HelpMessageOpt("-addressstyle", _("What style addresses to use (\"legacy\", \"p2sh\", \"segwit\")"));
-    strUsage += HelpMessageOpt("-changestyle", _("What style change to use (\"legacy\", \"p2sh\", \"segwit\")"));
     strUsage += HelpMessageOpt("-disablewallet", _("Do not load the wallet and disable wallet RPC calls"));
     strUsage += HelpMessageOpt("-keypool=<n>", strprintf(_("Set key pool size to <n> (default: %u)"), DEFAULT_KEYPOOL_SIZE));
     strUsage += HelpMessageOpt("-fallbackfee=<amt>", strprintf(_("A fee rate (in %s/kB) that will be used when fee estimation has insufficient data (default: %s)"),
@@ -32,6 +29,7 @@ std::string GetWalletHelpString(bool showDebug)
     strUsage += HelpMessageOpt("-salvagewallet", _("Attempt to recover private keys from a corrupt wallet on startup"));
     strUsage += HelpMessageOpt("-spendzeroconfchange", strprintf(_("Spend unconfirmed change when sending transactions (default: %u)"), DEFAULT_SPEND_ZEROCONF_CHANGE));
     strUsage += HelpMessageOpt("-txconfirmtarget=<n>", strprintf(_("If paytxfee is not set, include enough fee so transactions begin confirmation on average within n blocks (default: %u)"), DEFAULT_TX_CONFIRM_TARGET));
+    strUsage += HelpMessageOpt("-usehd", _("Use hierarchical deterministic key generation (HD) after BIP32. Only has effect during wallet creation/first start") + " " + strprintf(_("(default: %u)"), DEFAULT_USE_HD_WALLET));
     strUsage += HelpMessageOpt("-walletrbf", strprintf(_("Send transactions with full-RBF opt-in enabled (default: %u)"), DEFAULT_WALLET_RBF));
     strUsage += HelpMessageOpt("-upgradewallet", _("Upgrade wallet to latest format on startup"));
     strUsage += HelpMessageOpt("-wallet=<file>", _("Specify wallet file (within data directory)") + " " + strprintf(_("(default: %s)"), DEFAULT_WALLET_DAT));
@@ -170,33 +168,10 @@ bool WalletParameterInteraction()
     bSpendZeroConfChange = gArgs.GetBoolArg("-spendzeroconfchange", DEFAULT_SPEND_ZEROCONF_CHANGE);
     fWalletRbf = gArgs.GetBoolArg("-walletrbf", DEFAULT_WALLET_RBF);
 
-    std::string style = gArgs.GetArg("-addressstyle", "default");
-    OutputStyle parsed_style = ParseStyle(style);
-    if (parsed_style == STYLE_NONE) {
-        return InitError(strprintf(_("Unknown address style '%s'"), style));
-    } else {
-        address_style = parsed_style;
-    }
-
-    style = gArgs.GetArg("-changestyle", style);
-    parsed_style = ParseStyle(style);
-    if (parsed_style == STYLE_NONE) {
-        return InitError(strprintf(_("Unknown change style '%s'"), style));
-    } else {
-        change_style = parsed_style;
-    }
-
     return true;
 }
 
-void RegisterWalletRPC(CRPCTable &t)
-{
-    if (gArgs.GetBoolArg("-disablewallet", false)) return;
-
-    RegisterWalletRPCCommands(t);
-}
-
-bool VerifyWallets()
+bool WalletVerify()
 {
     if (gArgs.GetBoolArg("-disablewallet", DEFAULT_DISABLE_WALLET))
         return true;
@@ -253,7 +228,7 @@ bool VerifyWallets()
     return true;
 }
 
-bool OpenWallets()
+bool InitLoadWallet()
 {
     if (gArgs.GetBoolArg("-disablewallet", DEFAULT_DISABLE_WALLET)) {
         LogPrintf("Wallet disabled!\n");
@@ -269,29 +244,4 @@ bool OpenWallets()
     }
 
     return true;
-}
-
-void StartWallets(CScheduler& scheduler) {
-    for (CWalletRef pwallet : vpwallets) {
-        pwallet->postInitProcess(scheduler);
-    }
-}
-
-void FlushWallets() {
-    for (CWalletRef pwallet : vpwallets) {
-        pwallet->Flush(false);
-    }
-}
-
-void StopWallets() {
-    for (CWalletRef pwallet : vpwallets) {
-        pwallet->Flush(true);
-    }
-}
-
-void CloseWallets() {
-    for (CWalletRef pwallet : vpwallets) {
-        delete pwallet;
-    }
-    vpwallets.clear();
 }

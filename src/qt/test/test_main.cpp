@@ -53,10 +53,6 @@ int main(int argc, char *argv[])
     SetupNetworking();
     SelectParams(CBaseChainParams::MAIN);
     noui_connect();
-    ClearDatadirCache();
-    fs::path pathTemp = fs::temp_directory_path() / strprintf("test_bitcoin-qt_%lu_%i", (unsigned long)GetTime(), (int)GetRand(100000));
-    fs::create_directories(pathTemp);
-    gArgs.ForceSetArg("-datadir", pathTemp.string());
 
     bool fInvalid = false;
 
@@ -100,8 +96,6 @@ int main(int argc, char *argv[])
         fInvalid = true;
     }
 #endif
-
-    fs::remove_all(pathTemp);
 
     return fInvalid;
 }

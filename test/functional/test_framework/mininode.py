@@ -493,10 +493,10 @@ class CTransaction(object):
         r += struct.pack("<I", self.nLockTime)
         return r
 
-    # Regular serialization is with witness -- must explicitly
-    # call serialize_without_witness to exclude witness data.
+    # Regular serialization is without witness -- must explicitly
+    # call serialize_with_witness to include witness data.
     def serialize(self):
-        return self.serialize_with_witness()
+        return self.serialize_without_witness()
 
     # Recalculate the txid (transaction hash without witness)
     def rehash(self):
@@ -512,7 +512,7 @@ class CTransaction(object):
 
         if self.sha256 is None:
             self.sha256 = uint256_from_str(hash256(self.serialize_without_witness()))
-        self.hash = encode(hash256(self.serialize_without_witness())[::-1], 'hex_codec').decode('ascii')
+        self.hash = encode(hash256(self.serialize())[::-1], 'hex_codec').decode('ascii')
 
     def is_valid(self):
         self.calc_sha256()
@@ -603,13 +603,13 @@ class CBlock(CBlockHeader):
         super(CBlock, self).deserialize(f)
         self.vtx = deser_vector(f, CTransaction)
 
-    def serialize(self, with_witness=True):
+    def serialize(self, with_witness=False):
         r = b""
         r += super(CBlock, self).serialize()
         if with_witness:
             r += ser_vector(self.vtx, "serialize_with_witness")
         else:
-            r += ser_vector(self.vtx, "serialize_without_witness")
+            r += ser_vector(self.vtx)
         return r
 
     # Calculate the merkle root given a vector of transaction hashes
@@ -751,7 +751,7 @@ class PrefilledTransaction(object):
         self.tx = CTransaction()
         self.tx.deserialize(f)
 
-    def serialize(self, with_witness=True):
+    def serialize(self, with_witness=False):
         r = b""
         r += ser_compact_size(self.index)
         if with_witness:
@@ -759,9 +759,6 @@ class PrefilledTransaction(object):
         else:
             r += self.tx.serialize_without_witness()
         return r
-
-    def serialize_without_witness(self):
-        return self.serialize(with_witness=False)
 
     def serialize_with_witness(self):
         return self.serialize(with_witness=True)
@@ -802,7 +799,7 @@ class P2PHeaderAndShortIDs(object):
         if with_witness:
             r += ser_vector(self.prefilled_txn, "serialize_with_witness")
         else:
-            r += ser_vector(self.prefilled_txn, "serialize_without_witness")
+            r += ser_vector(self.prefilled_txn)
         return r
 
     def __repr__(self):
@@ -933,13 +930,13 @@ class BlockTransactions(object):
         self.blockhash = deser_uint256(f)
         self.transactions = deser_vector(f, CTransaction)
 
-    def serialize(self, with_witness=True):
+    def serialize(self, with_witness=False):
         r = b""
         r += ser_uint256(self.blockhash)
         if with_witness:
             r += ser_vector(self.transactions, "serialize_with_witness")
         else:
-            r += ser_vector(self.transactions, "serialize_without_witness")
+            r += ser_vector(self.transactions)
         return r
 
     def __repr__(self):
@@ -952,7 +949,7 @@ class msg_version(object):
 
     def __init__(self):
         self.nVersion = MY_VERSION
-        self.nServices = NODE_NETWORK | NODE_WITNESS
+        self.nServices = 1
         self.nTime = int(time.time())
         self.addrTo = CAddress()
         self.addrFrom = CAddress()
@@ -1158,7 +1155,7 @@ class msg_block(object):
         self.block.deserialize(f)
 
     def serialize(self):
-        return self.block.serialize(with_witness=False)
+        return self.block.serialize()
 
     def __repr__(self):
         return "msg_block(block=%s)" % (repr(self.block))
@@ -1445,7 +1442,7 @@ class msg_blocktxn(object):
 
     def serialize(self):
         r = b""
-        r += self.block_transactions.serialize(with_witness=False)
+        r += self.block_transactions.serialize()
         return r
 
     def __repr__(self):
@@ -1652,12 +1649,11 @@ class NodeConn(asyncore.dispatcher):
         "regtest": b"\xfa\xbf\xb5\xda",   # regtest
     }
 
-    def __init__(self, dstaddr, dstport, rpc, callback, net="regtest", services=NODE_NETWORK|NODE_WITNESS, send_version=True):
+    def __init__(self, dstaddr, dstport, rpc, callback, net="regtest", services=NODE_NETWORK, send_version=True):
         asyncore.dispatcher.__init__(self, map=mininode_socket_map)
         self.dstaddr = dstaddr
         self.dstport = dstport
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.sendbuf = b""
         self.recvbuf = b""
         self.ver_send = 209
@@ -1796,14 +1792,7 @@ class NodeConn(asyncore.dispatcher):
             tmsg += h[:4]
         tmsg += data
         with mininode_lock:
-            if (len(self.sendbuf) == 0 and not pushbuf):
-                try:
-                    sent = self.send(tmsg)
-                    self.sendbuf = tmsg[sent:]
-                except BlockingIOError:
-                    self.sendbuf = tmsg
-            else:
-                self.sendbuf += tmsg
+            self.sendbuf += tmsg
             self.last_sent = time.time()
 
     def got_message(self, message):
@@ -1841,7 +1830,6 @@ class NetworkThread(Thread):
                     disconnected.append(obj)
             [ obj.handle_close() for obj in disconnected ]
             asyncore.loop(0.1, use_poll=True, map=mininode_socket_map, count=1)
-        logger.debug("Network thread closing")
 
 
 # An exception we can raise if we detect a potential disconnect

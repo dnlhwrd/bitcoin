@@ -65,6 +65,8 @@ static const unsigned int DEFAULT_TX_CONFIRM_TARGET = 6;
 static const bool DEFAULT_WALLET_RBF = false;
 static const bool DEFAULT_WALLETBROADCAST = true;
 static const bool DEFAULT_DISABLE_WALLET = false;
+//! if set, all keys will be derived by using BIP32
+static const bool DEFAULT_USE_HD_WALLET = true;
 
 extern const char * DEFAULT_WALLET_DAT;
 
@@ -85,7 +87,7 @@ enum class FeeEstimateMode;
 /** (client) version numbers for particular wallet features */
 enum WalletFeature
 {
-    FEATURE_BASE = 10500, // the earliest version new wallets supports (only useful for getwalletinfo's clientversion output)
+    FEATURE_BASE = 10500, // the earliest version new wallets supports (only useful for getinfo's clientversion output)
 
     FEATURE_WALLETCRYPT = 40000, // wallet encryption
     FEATURE_COMPRPUBKEY = 60000, // compressed public keys
@@ -94,21 +96,8 @@ enum WalletFeature
 
     FEATURE_HD_SPLIT = 139900, // Wallet with HD chain split (change outputs will use m/0'/1'/k)
 
-    FEATURE_NO_DEFAULT_KEY = 159900, // Wallet without a default key written
-
     FEATURE_LATEST = FEATURE_COMPRPUBKEY // HD is optional, use FEATURE_COMPRPUBKEY as latest version
 };
-
-enum OutputStyle
-{
-    STYLE_NONE,
-    STYLE_LEGACY,
-    STYLE_P2SH,
-    STYLE_SEGWIT
-};
-
-extern OutputStyle address_style;
-extern OutputStyle change_style;
 
 
 /** A key pool entry */
@@ -1117,15 +1106,6 @@ public:
        caller must ensure the current wallet version is correct before calling
        this function). */
     bool SetHDMasterKey(const CPubKey& key);
-
-    /* Check whether we know how to sign for an output like this, assuming we
-     * have all private keys. This is unrelated to whether we consider this
-     * output to be ours. */
-    bool IsSolvable(const CScript& script) const;
-
-    CTxDestination GetDestinationForKey(const CPubKey& key, OutputStyle);
-    CTxDestination GetDestinationForScript(const CScript& script, OutputStyle);
-    void RecoverKey(const CPubKey& key);
 };
 
 /** A key allocated from the key pool. */
@@ -1214,8 +1194,5 @@ bool CWallet::DummySignTx(CMutableTransaction &txNew, const ContainerType &coins
     }
     return true;
 }
-
-OutputStyle ParseStyle(const std::string& str);
-const std::string& FormatStyle(OutputStyle style);
 
 #endif // BITCOIN_WALLET_WALLET_H
